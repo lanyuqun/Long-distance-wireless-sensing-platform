@@ -11,20 +11,19 @@ import scipy.optimize as op
 from scipy.ndimage import gaussian_filter1d as ft
 from scipy.signal import find_peaks as fp
 import traceback
+import keyboard
 
 matplotlib.use('TkAgg')
 SWEEP_POINT = 0  # a global variable for the the sweep points
 SWEEP_TYPE = 0  # 0 - bus, 1 - internal
 
-FITTED_PARA = [
-    13e-6, 22e-12, 53e3
-]  # inductance, capacitance, resistance  [13e-6, 20e-12, 46e3] [13e-6, 29e-12, 54e3]
-STARTF = 8e6
-STORTF = 11e6
+FITTED_PARA = [9.6e-6, 16e-12, 54e3]  # inductance, capacitance, resistance [16e-6, 31e-12, 95e3]
+STARTF = 9e6
+STOPF = 14e6
 
-SWEEP_POINT_NUM = 250
+SWEEP_POINT_NUM = 200
 
-remark = 'P'  # remarks in the file name
+remark = ''  # remarks in the file name
 
 
 def configBasic(inst, mType1='Z'):  # , mType2='TZ', vol=500e-3
@@ -41,8 +40,7 @@ def configBasic(inst, mType1='Z'):  # , mType2='TZ', vol=500e-3
     # Set OSC level
     inst.write(":SOUR1:VOLT 1000E-3")  # Max 1V, quan - mV
     # Set data format to binary bin block as real 64-bit
-    inst.write("FORMat:DATA REAL"
-               )  # REAL: IEEE 64-bit floating point binary transfer format
+    inst.write("FORMat:DATA REAL")  # REAL: IEEE 64-bit floating point binary transfer format
     inst.write("TRIG1:POIN1 ON")
     # turn off the display update of all windows
     inst.write(':DISPlay:ENABle %d' % (0))
@@ -72,9 +70,7 @@ def triggerBasicSweep(inst, startfreq, stopfreq, n=601, sp_t=1000):
         # Force single trigger with hold-off.
         inst.query("TRIG:SING;*OPC?")
     # Query Trace stimulus arrays as Real64-bit binary blocks.
-    trace1Data = inst.query_binary_values("CALC:DATA:FDATA?",
-                                          datatype='d',
-                                          is_big_endian=True)
+    trace1Data = inst.query_binary_values("CALC:DATA:FDATA?", datatype='d', is_big_endian=True)
     stimulusData = np.linspace(startfreq, stopfreq, n)
     # For each of the formatted response or data arrays every other
     # value is a zero place holder thus strip this
@@ -86,8 +82,7 @@ def C2F_func(p, x):
     '''relationship between Code and resonant frequency'''
     # a1, a2, b1, b2 = p
     # return a1 * np.exp(a2 * x) + b1 * np.exp(b2 * x)
-    return p[0] + p[1] * x + p[2] * np.power(x, 2) + p[3] * np.power(
-        x, 3) + p[4] * np.power(x, 4) + p[5] * np.power(x, 5)
+    return p[0] + p[1] * x + p[2] * np.power(x, 2) + p[3] * np.power(x, 3) + p[4] * np.power(x, 4) + p[5] * np.power(x, 5) + p[6] * np.power(x, 6) + p[7] * np.power(x, 7)
 
 
 def F2Z_func(p, freq):
@@ -95,8 +90,7 @@ def F2Z_func(p, freq):
     L, C, R = p
     Real = 1 / R
     Vir = 1j * 2 * np.pi * freq * C - 1j / (2 * np.pi * freq * L)
-    return np.abs(
-        1 / (Real + Vir)) - 1e12 * (R < 0)  # R should not small than zero
+    return np.abs(1 / (Real + Vir)) - 1e12 * (R < 0)  # R should not small than zero
 
 
 def F2T_func(p, freq):
@@ -111,10 +105,7 @@ def Error(p, func, x, y):  # for the calculation of optimize.leastsq
     return func(p, x) - y
 
 
-def saveFileStr(lable: str,
-                remark: str,
-                tp: str,
-                format: int = 1):  # for convenient save file
+def saveFileStr(lable: str, remark: str, tp: str, format: int = 1):  # for convenient save file
     if format == 1:
         testTime = datetime.now().strftime('%m-%d_%H-%M-%S.%f')
     else:
@@ -125,14 +116,7 @@ def saveFileStr(lable: str,
     return f'{saveDir}{lable}_{testTime}{remark}.{tp}'
 
 
-def C2F_Calibr(inst_E,
-               inst_AD,
-               startfreq=3.5e6,
-               stopfreq=5.5e6,
-               sp=201,
-               startC=0x99000,
-               stopC=0xFF000,
-               stepC=0x03000):
+def C2F_Calibr(inst_E, inst_AD, startfreq=3.5e6, stopfreq=5.5e6, sp=201, startC=0x99000, stopC=0xCCC28, stepC=0x03000):
     F1 = startfreq  # for dynamical update of the sweep range
     F2 = stopfreq
     sweepPoint = sp
@@ -153,11 +137,12 @@ def C2F_Calibr(inst_E,
         p_est, t = op.leastsq(Error, FITTED_PARA, args=(F2Z_func, freq, imp))
         peakF = op.fminbound(lambda freq: -F2Z_func(p_est, freq), F1, F2)
         # Save the code and the corresponding resonant frequency
-        if (peakF > startfreq * 1.01
-                and peakF < stopfreq * 0.99):  # valid data
-            Code2Freq.append(
-                [int(setCode),
-                 peakF])  # [:, 0] is code, [:, 1] is resonant frequency
+        if (peakF > startfreq * 1.01 and peakF < stopfreq * 0.99):  # valid data
+            if (len(Code2Freq) >= 1):
+                if (peakF > Code2Freq[-1][1]):
+                    Code2Freq.append([int(setCode), peakF])
+            else:
+                Code2Freq.append([int(setCode), peakF])  # [:, 0] is code, [:, 1] is resonant frequency
         # print([setCode, peakF])
         # Increase the code to apply
         setCode = setCode + stepCode
@@ -167,31 +152,18 @@ def C2F_Calibr(inst_E,
     # Convert the list to np array
     C2F_np = np.array(Code2Freq)
     # Fit the data with preset function "C2F_func"
-    para_C2F = op.leastsq(Error, [-2.8e7, 170e2, 3e-4, 4e-10, -2e-16, 4e-23],
-                          args=(C2F_func, C2F_np[:, 0], C2F_np[:, 1]))
+    para_C2F = op.leastsq(Error, [4.8e6, -18, .45e-5, -5.5e-11, -2e-16, 4e-23, 0, 0], args=(C2F_func, C2F_np[:, 0], C2F_np[:, 1]))
     para_C2F = para_C2F[0]
-    np.savetxt(saveFileStr('C2F', '', 'txt', 0),
-               C2F_np,
-               header=str(para_C2F)[1:-1],
-               comments='')
+    np.savetxt(saveFileStr('C2F', '', 'txt', 0), C2F_np, header=str(para_C2F)[1:-1], comments='')
     # Plot the relationship between the code and the resonant frequency
     fig, ax = plt.subplots()
     # ax = fig.add_subplots(111)
-    p1 = ax.plot(C2F_np[:, 0], C2F_np[:, 1], c='#003366',
-                 label='measured')  # p =
-    p2 = ax.plot(C2F_np[:, 0],
-                 C2F_func(para_C2F, C2F_np[:, 0]),
-                 '--',
-                 c='#cc3333',
-                 label='fitted')  # p =
+    p1 = ax.plot(C2F_np[:, 0], C2F_np[:, 1], c='#003366', label='measured')  # p =
+    p2 = ax.plot(C2F_np[:, 0], C2F_func(para_C2F, C2F_np[:, 0]), '--', c='#cc3333', label='fitted')  # p =
     ax.set_xlabel("Code")
     ax.set_ylabel("resonant frequency (Hz)")
     ax2 = ax.twinx()
-    p3 = ax2.plot(C2F_np[:, 0],
-                  (C2F_func(para_C2F, C2F_np[:, 0]) - C2F_np[:, 1]) /
-                  C2F_np[:, 1] * 100,
-                  '-r',
-                  label='error')
+    p3 = ax2.plot(C2F_np[:, 0], (C2F_func(para_C2F, C2F_np[:, 0]) - C2F_np[:, 1]) / C2F_np[:, 1] * 100, '-r', label='error')
     ax2.set_ylabel("Error (%)")
     p = p1 + p2 + p3
     labs = [kk.get_label() for kk in p]
@@ -210,15 +182,13 @@ def C2F_Calibr(inst_E,
 
 os.add_dll_directory(r"C:/Program Files/Keysight/IO Libraries Suite/bin")
 os.add_dll_directory(r"C:/Program Files (x86)/Keysight/IO Libraries Suite/bin")
-rm = pyvisa.ResourceManager(
-    "C:\\Program Files (x86)\\IVI Foundation\\VISA\\WinNT\\ktvisa\\ktbin\\visa32.dll"
-)  # kt or ag?
+rm = pyvisa.ResourceManager("C:\\Program Files (x86)\\IVI Foundation\\VISA\\WinNT\\ktvisa\\ktbin\\visa32.dll")  # kt or ag?
 
 startCode = 0x99000
-stopCode = 0xE6600  # 0xF9900  # E658B
+stopCode = 0xF9900  # 0xF9900  # E658B
 stepCode = 0x02000
 startFrequency = STARTF
-stopFrequency = STORTF
+stopFrequency = STOPF
 sweepPoint = 201
 
 board = 'EVAL-AD5791SDZ'
@@ -233,7 +203,13 @@ dacfunc.write_dac_code(AD5791, 0x99000, 20, True)
 dacfunc.remove_output_clamp(AD5791)
 
 try:
-    E4990A = rm.open_resource('???::?????::?????::??::?::INSTR')  # Fill in a VISA address!!!!!!!!!!!!
+    E4990A = rm.open_resource('USB0::0x2A8D::0x5F01::MY54404049::0::INSTR')
+    # USB0::0x2A8D::0x5F01::MY54403900::0::INSTR
+    # USB0::0x0957::0x1809::MY54101669::0::INSTR
+    # USB0::0x2A8D::0x5F01::MY54403994::0::INSTR
+    # GPIB0::17::INSTR
+    # TCPIP0::169.254.245.110::inst0::INSTR
+    # USB0::0x2A8D::0x5F01::MY54403996::0::INSTR
     E4990A.timeout = 10000
     configBasic(E4990A)
 
@@ -245,8 +221,7 @@ try:
         for dirpath, dirname, filename in os.walk("./res/"):
             if name[6:] in filename:
                 exist_C2F = 1
-                t = input(
-                    f"Find the C2F file '{name}'. Open it? <Y/N/filename>: ")
+                t = input(f"Find the C2F file '{name}'. Open it? <Y/N/filename>: ")
                 if t in {'Y', 'y', 'yes', ''}:
                     with open(name, 'r') as f:
                         data = f.readlines()
@@ -258,11 +233,7 @@ try:
                     exist_C2F = 1
                     break
                 elif t in {'N', 'n', 'no'}:
-                    para_C2F, C2F_np = C2F_Calibr(E4990A, AD5791,
-                                                  startFrequency,
-                                                  stopFrequency, sweepPoint,
-                                                  startCode, stopCode,
-                                                  stepCode)
+                    para_C2F, C2F_np = C2F_Calibr(E4990A, AD5791, startFrequency, stopFrequency, sweepPoint, startCode, stopCode, stepCode)
                     exist_C2F = 1
                     break
                 else:
@@ -270,13 +241,9 @@ try:
                     exist_C2F == 0.5
                     break
         if exist_C2F == 0:
-            t = input(
-                "Cannot find the C2F file. Please enter the file name or press ENTER to execute calibration. <ENTER/filename>: "
-            )
+            t = input("Cannot find the C2F file. Please enter the file name or press ENTER to execute calibration. <ENTER/filename>: ")
             if len(t) == 0:
-                para_C2F, C2F_np = C2F_Calibr(E4990A, AD5791, startFrequency,
-                                              stopFrequency, sweepPoint,
-                                              startCode, stopCode, stepCode)
+                para_C2F, C2F_np = C2F_Calibr(E4990A, AD5791, startFrequency, stopFrequency, sweepPoint, startCode, stopCode, stepCode)
                 exist_C2F = 1
             else:
                 name = "./res/" + t
@@ -285,11 +252,11 @@ try:
     # Select trace 1 and set measurement format
     E4990A.write("CALCulate:PARameter1:DEFine TZ")
 
-    sweepStop = int(np.max(C2F_np[:, 1]) * 0.998) - 1.0
+    sweepStop = int(np.max(C2F_np[:, 1]) * 0.995) - 1.0
     sweepstart = int(np.min(C2F_np[:, 1]) * 1.0001) + 1.0
     sweepPointNum = SWEEP_POINT_NUM
     sweepStep = round((sweepStop - sweepstart) / sweepPointNum)
-    sweepRepeat = 15
+    sweepRepeat = 5
     guessCode = min(C2F_np[:, 0])
     remark_loop = remark
     while 1:
@@ -299,23 +266,18 @@ try:
 
         while sweepFreq <= sweepStop:
             # Calculate the float solution of expected code; * 1.005
-            rootCode = op.fsolve(
-                lambda c: (C2F_func(para_C2F, c) - sweepFreq * 1.002),
-                guessCode)[0]
+            rootCode = op.fsolve(lambda c: (C2F_func(para_C2F, c) - sweepFreq * 1.0005), guessCode)[0]
             # Convert the solution to decimal value
             rootCode = int(np.around(rootCode))
             # Prevent the unexpected applied voltage
             if (rootCode < startCode or rootCode > stopCode):
-                print(
-                    f'Code = {rootCode} is out of range [{startCode}: {stopCode}]!'
-                )  # raise Exception
+                print(f'Code = {rootCode} is out of range [{startCode}: {stopCode}]!')  # raise Exception
                 break
             # t_t1 = time.perf_counter()
             dacfunc.write_dac_code(AD5791, rootCode, 20, True)
             # t_t2 = time.perf_counter()
             # time.sleep(0.030)
-            phase, freq = triggerBasicSweep(E4990A, sweepFreq, sweepFreq,
-                                            sweepRepeat)
+            phase, freq = triggerBasicSweep(E4990A, sweepFreq, sweepFreq, sweepRepeat)
             # t_t3 = time.perf_counter()
             # print(f'--time: {t_t2 - t_t1} s, {t_t3 - t_t2} s')
             tPhase = np.average(phase)
@@ -324,23 +286,22 @@ try:
             sweepFreq = sweepFreq + sweepStep
 
         t2 = time.perf_counter()
-        print(f'time: {t2 - t1} s')
 
         F2I_np = np.array(Freq2Imp)
+        np.savetxt(saveFileStr('F2I', remark_loop, 'txt'), F2I_np, header=f'time, {t1}, {t2}')
+
+        print(f'time: {t2 - t1} s')
         phase_f = ft(F2I_np[:, 1], 2)
         kk = fp(-phase_f, prominence=0.05)
         kk = kk[0]
         if len(kk) == 0:
             kk = 0
-        np.savetxt(saveFileStr('F2I', remark_loop, 'txt'),
-                   F2I_np,
-                   header=f'time, {t1}, {t2}')
+        print(F2I_np[kk, 0])
 
         fig, ax = plt.subplots()
         ax.plot(F2I_np[3:, 0], F2I_np[3:, 1], c='#77A88D')
         ax.plot(F2I_np[3:, 0], phase_f[3:], c='y', ls='--')
         ax.plot(F2I_np[kk, 0], phase_f[kk], 'r^')
-        print(F2I_np[kk, 0])
 
         ax.set_xlabel('Frequency (Hz)')
         ax.set_ylabel('Phase (°)')
@@ -362,6 +323,16 @@ try:
         else:
             remark_loop = remark
 
+        try:
+            if keyboard.is_pressed('q'):
+                break
+        except Exception as ex:
+            traceback.print_exc()
+            print(ex)
+            break
+        finally:
+            pass
+
 except Exception as ex:
     traceback.print_exc()
     print(ex)
@@ -370,7 +341,7 @@ finally:
     E4990A.write(':DISPlay:ENABle %d' % (1))
     E4990A.write("SENSe:SWEep:POINts " + str(201))
     E4990A.write("CALCulate:PARameter1:DEFine " + 'Z')
-    E4990A.write("SENS:FREQ:STAR " + str(5e6) + ";STOP " + str(10e6))
+    E4990A.write("SENS:FREQ:STAR " + str(STARTF) + ";STOP " + str(STOPF))
     E4990A.write("TRIGger1:SOURce internal")
     E4990A.close()
     arc.close_connection(AD5791)
