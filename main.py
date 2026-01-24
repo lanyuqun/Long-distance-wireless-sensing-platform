@@ -203,13 +203,7 @@ dacfunc.write_dac_code(AD5791, 0x99000, 20, True)
 dacfunc.remove_output_clamp(AD5791)
 
 try:
-    E4990A = rm.open_resource('USB0::0x2A8D::0x5F01::MY54404049::0::INSTR')
-    # USB0::0x2A8D::0x5F01::MY54403900::0::INSTR
-    # USB0::0x0957::0x1809::MY54101669::0::INSTR
-    # USB0::0x2A8D::0x5F01::MY54403994::0::INSTR
-    # GPIB0::17::INSTR
-    # TCPIP0::169.254.245.110::inst0::INSTR
-    # USB0::0x2A8D::0x5F01::MY54403996::0::INSTR
+    E4990A = rm.open_resource('USB0::0x2A8D::0x5F01::MY00000001::0::INSTR')
     E4990A.timeout = 10000
     configBasic(E4990A)
 
@@ -345,3 +339,4 @@ finally:
     E4990A.write("TRIGger1:SOURce internal")
     E4990A.close()
     arc.close_connection(AD5791)
+
